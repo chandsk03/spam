@@ -41,7 +41,7 @@ try:
     logger.error(f"Parsed ALLOWED_USERS: {ALLOWED_USERS}")
 except ValueError as e:
     logger.error(f"Failed to parse ALLOWED_USERS: {e}. Falling back to default user.")
-    ALLOWED_USERS = {7398854594}
+    ALLOWED_USERS = {7584086775}
 
 SET_MESSAGE, SET_INTERVAL, JOIN_GROUP, LEAVE_GROUP, UPLOAD_SESSION, REFRESH_SESSIONS = range(6)
 
