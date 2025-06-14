@@ -23,10 +23,12 @@ import re
 import sys
 import time
 
+# Configure stdout/stderr encoding for Windows (not needed on Render, which uses Linux)
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
+# Load environment variables
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -34,33 +36,8 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 allowed_users_str = os.getenv("ALLOWED_USERS")
 logger = logging.getLogger(__name__)
-logger.error(f"Raw ALLOWED_USERS from env: {allowed_users_str}")
-try:
-    user_ids = [id.strip() for id in allowed_users_str.split(',') if id.strip()]
-    ALLOWED_USERS = set(map(int, user_ids))
-    logger.error(f"Parsed ALLOWED_USERS: {ALLOWED_USERS}")
-except ValueError as e:
-    logger.error(f"Failed to parse ALLOWED_USERS: {e}. Falling back to default user.")
-    ALLOWED_USERS = {7584086775}
 
-SET_MESSAGE, SET_INTERVAL, JOIN_GROUP, LEAVE_GROUP, UPLOAD_SESSION, REFRESH_SESSIONS = range(6)
-
-CONFIG_FILE = "bot_config.json"
-SESSION_DIR = "sessions"
-SESSION_BACKUP_DIR = "sessions_backup"
-os.makedirs(SESSION_DIR, exist_ok=True)
-os.makedirs(SESSION_BACKUP_DIR, exist_ok=True)
-ALLOWED_EXTENSIONS = {'.session', '.zip'}
-MAX_SPAM_RATE = 1
-RATE_LIMIT_MESSAGES_PER_SECOND = 30
-RATE_LIMIT_MESSAGES_PER_MINUTE_PER_GROUP = 20
-MAX_CONSECUTIVE_FAILURES = 3
-
-class SafeBotTokenFilter(logging.Filter):
-    def filter(self, record):
-        record.msg = record.msg.replace(BOT_TOKEN, "BOT_TOKEN_MASKED")
-        return True
-
+# Configure logging
 log_handler = logging.handlers.RotatingFileHandler(
     "bot.log",
     maxBytes=10*1024*1024,
@@ -75,8 +52,37 @@ logging.basicConfig(
         logging.StreamHandler(stream=sys.stdout)
     ]
 )
+
+# Parse ALLOWED_USERS
+try:
+    user_ids = [id.strip() for id in allowed_users_str.split(',') if id.strip()]
+    ALLOWED_USERS = set(map(int, user_ids))
+    logger.error(f"Parsed ALLOWED_USERS: {ALLOWED_USERS}")
+except (ValueError, AttributeError) as e:
+    logger.error(f"Failed to parse ALLOWED_USERS: {e}. Falling back to default user.")
+    ALLOWED_USERS = {7584086775}
+
+# Bot configuration
+SET_MESSAGE, SET_INTERVAL, JOIN_GROUP, LEAVE_GROUP, UPLOAD_SESSION, REFRESH_SESSIONS = range(6)
+CONFIG_FILE = "bot_config.json"
+SESSION_DIR = "sessions"
+SESSION_BACKUP_DIR = "sessions_backup"
+os.makedirs(SESSION_DIR, exist_ok=True)
+os.makedirs(SESSION_BACKUP_DIR, exist_ok=True)
+ALLOWED_EXTENSIONS = {'.session', '.zip'}
+MAX_SPAM_RATE = 1
+RATE_LIMIT_MESSAGES_PER_SECOND = 30
+RATE_LIMIT_MESSAGES_PER_MINUTE_PER_GROUP = 20
+MAX_CONSECUTIVE_FAILURES = 3
+
+class SafeBotTokenFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = record.msg.replace(BOT_TOKEN, "BOT_TOKEN_MASKED") if BOT_TOKEN else record.msg
+        return True
+
 logger.addFilter(SafeBotTokenFilter())
 
+# Global variables
 is_spamming = False
 client = None
 user_chat_id = None
@@ -85,6 +91,7 @@ global_message_count = 0
 last_global_reset = time.time()
 chat_failure_counts = {}
 
+# Load or initialize config
 if not os.path.exists(CONFIG_FILE):
     config = {
         "groups": {},
@@ -107,6 +114,7 @@ else:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4)
 
+# Your existing functions (save_config, validate_chat_input, etc.) remain unchanged
 def save_config():
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
@@ -124,7 +132,6 @@ def validate_chat_id(chat_id):
     return chat_id_pattern.match(chat_id)
 
 def is_private_group_link(invite_link):
-    """Check if the invite link indicates a private group (e.g., starts with https://t.me/+)."""
     private_link_pattern = re.compile(r'^https://t\.me/\+[\w-]+$')
     return bool(private_link_pattern.match(invite_link))
 
@@ -167,7 +174,6 @@ async def rate_limit_check(chat_id):
         await asyncio.sleep(wait_time)
 
 async def attempt_leave_group(chat_id, group_info=None):
-    """Attempt to leave the group and return whether the operation was successful."""
     try:
         await client(LeaveChannelRequest(int(chat_id)))
         return True
@@ -176,10 +182,9 @@ async def attempt_leave_group(chat_id, group_info=None):
         return False
 
 async def handle_telethon_error(error, update=None, context=None, application=None, operation="operation", chat_id=None, user_id=None, invite_link=None):
-    """Handle Telethon errors and return a user-friendly message and action."""
     user_message = f"❌ Error during {operation}: {str(error)}"
-    action = None  
-    auto_leave = False  
+    action = None
+    auto_leave = False
     is_private = invite_link and is_private_group_link(invite_link)
 
     logger.error(f"Handling Telethon error of type {type(error).__name__}: {str(error)}")
@@ -315,9 +320,9 @@ async def handle_telethon_error(error, update=None, context=None, application=No
             user_message += f" Removed {group_info.get('title', 'Unknown')} (ID: {chat_id}) from target list."
         action = "remove"
 
-    if update and context:  
+    if update and context:
         await update.message.reply_text(user_message, reply_markup=REPLY_MARKUP)
-    elif user_chat_id and application: 
+    elif user_chat_id and application:
         await application.bot.send_message(user_chat_id, user_message)
 
     return action
@@ -379,6 +384,7 @@ async def attempt_auto_login(application):
                 return False
             await asyncio.sleep(2)
 
+# Your existing command handlers (start, set_logging, manage_groups, etc.) remain unchanged
 @restrict_access
 async def start(update, context):
     global user_chat_id
@@ -1060,69 +1066,68 @@ async def cancel(update, context):
     await update.message.reply_text("❌ Operation cancelled.", reply_markup=REPLY_MARKUP)
     return ConversationHandler.END
 
-async def main(loop):
-    application = Application.builder().token(BOT_TOKEN).build()
-    await application.initialize()
-    await application.start()
-
-    session_available = await attempt_auto_login(application)
-
-    if not session_available:
-        for admin_id in ALLOWED_USERS:
-            try:
-                await application.bot.send_message(
-                    admin_id,
-                    "📂 No session file found on startup or session was invalid. Please upload a session file using 'Upload Session'."
-                )
-            except telegram.error.TelegramError as te:
-                logger.error(f"Failed to notify admin {admin_id} about missing session: {te.message}")
-
-    set_message_conv = ConversationHandler(
-        entry_points=[CommandHandler("set_message", manage_message), MessageHandler(filters.Regex("Manage Message"), manage_message)],
-        states={SET_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_message)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    set_interval_conv = ConversationHandler(
-        entry_points=[CommandHandler("set_interval", manage_interval), MessageHandler(filters.Regex("Manage Interval"), manage_interval)],
-        states={SET_INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_interval)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    join_group_conv = ConversationHandler(
-        entry_points=[CommandHandler("join_group", join_group), MessageHandler(filters.Regex("Join Group"), join_group)],
-        states={JOIN_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_join_group)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    leave_group_conv = ConversationHandler(
-        entry_points=[CommandHandler("leave_group", leave_group), MessageHandler(filters.Regex("Leave Group"), leave_group)],
-        states={LEAVE_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_leave_group)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    upload_session_conv = ConversationHandler(
-        entry_points=[CommandHandler("upload_session", upload_session), MessageHandler(filters.Regex("Upload Session"), upload_session)],
-        states={UPLOAD_SESSION: [MessageHandler(filters.Document.ALL | filters.TEXT, handle_session_file)]},
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("set_logging", set_logging))
-    application.add_handler(MessageHandler(filters.Regex("Manage Groups"), manage_groups))
-    application.add_handler(CommandHandler("remove_group", remove_group))
-    application.add_handler(set_message_conv)
-    application.add_handler(set_interval_conv)
-    application.add_handler(join_group_conv)
-    application.add_handler(leave_group_conv)
-    application.add_handler(upload_session_conv)
-    application.add_handler(MessageHandler(filters.Regex("Refresh Sessions"), refresh_sessions))
-    application.add_handler(CommandHandler("set_password", set_password))
-    application.add_handler(CommandHandler("start_spamming", start_spamming))
-    application.add_handler(MessageHandler(filters.Regex("Start Posting"), start_spamming))
-    application.add_handler(CommandHandler("stop_spamming", stop_spamming))
-    application.add_handler(MessageHandler(filters.Regex("Stop Posting"), stop_spamming))
-
+async def main():
     try:
+        application = Application.builder().token(BOT_TOKEN).build()
+        await application.initialize()
+        await application.start()
+
+        session_available = await attempt_auto_login(application)
+
+        if not session_available:
+            for admin_id in ALLOWED_USERS:
+                try:
+                    await application.bot.send_message(
+                        admin_id,
+                        "📂 No session file found on startup or session was invalid. Please upload a session file using 'Upload Session'."
+                    )
+                except telegram.error.TelegramError as te:
+                    logger.error(f"Failed to notify admin {admin_id} about missing session: {te.message}")
+
+        set_message_conv = ConversationHandler(
+            entry_points=[CommandHandler("set_message", manage_message), MessageHandler(filters.Regex("Manage Message"), manage_message)],
+            states={SET_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_message)]},
+            fallbacks=[CommandHandler("cancel", cancel)]
+        )
+        set_interval_conv = ConversationHandler(
+            entry_points=[CommandHandler("set_interval", manage_interval), MessageHandler(filters.Regex("Manage Interval"), manage_interval)],
+            states={SET_INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_interval)]},
+            fallbacks=[CommandHandler("cancel", cancel)]
+        )
+        join_group_conv = ConversationHandler(
+            entry_points=[CommandHandler("join_group", join_group), MessageHandler(filters.Regex("Join Group"), join_group)],
+            states={JOIN_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_join_group)]},
+            fallbacks=[CommandHandler("cancel", cancel)]
+        )
+        leave_group_conv = ConversationHandler(
+            entry_points=[CommandHandler("leave_group", leave_group), MessageHandler(filters.Regex("Leave Group"), leave_group)],
+            states={LEAVE_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, do_leave_group)]},
+            fallbacks=[CommandHandler("cancel", cancel)]
+        )
+        upload_session_conv = ConversationHandler(
+            entry_points=[CommandHandler("upload_session", upload_session), MessageHandler(filters.Regex("Upload Session"), upload_session)],
+            states={UPLOAD_SESSION: [MessageHandler(filters.Document.ALL | filters.TEXT, handle_session_file)]},
+            fallbacks=[CommandHandler("cancel", cancel)]
+        )
+
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("set_logging", set_logging))
+        application.add_handler(MessageHandler(filters.Regex("Manage Groups"), manage_groups))
+        application.add_handler(CommandHandler("remove_group", remove_group))
+        application.add_handler(set_message_conv)
+        application.add_handler(set_interval_conv)
+        application.add_handler(join_group_conv)
+        application.add_handler(leave_group_conv)
+        application.add_handler(upload_session_conv)
+        application.add_handler(MessageHandler(filters.Regex("Refresh Sessions"), refresh_sessions))
+        application.add_handler(CommandHandler("set_password", set_password))
+        application.add_handler(CommandHandler("start_spamming", start_spamming))
+        application.add_handler(MessageHandler(filters.Regex("Start Posting"), start_spamming))
+        application.add_handler(CommandHandler("stop_spamming", stop_spamming))
+        application.add_handler(MessageHandler(filters.Regex("Stop Posting"), stop_spamming))
+
         await application.updater.start_polling(allowed_updates=["message", "callback_query"])
-        while True:
-            await asyncio.sleep(1)
+        await asyncio.Event().wait()  # Keep the bot running
     except telegram.error.TelegramError as te:
         logger.error(f"Telegram API error during bot startup: {te.message}")
         raise
@@ -1133,8 +1138,8 @@ async def main(loop):
         if application.updater.running:
             await application.updater.stop()
         await application.stop()
-        for task in asyncio.all_tasks(loop):
-            if task is not asyncio.current_task(loop):
+        for task in asyncio.all_tasks():
+            if task is not asyncio.current_task():
                 task.cancel()
                 try:
                     await task
@@ -1149,28 +1154,4 @@ async def main(loop):
         logger.error("Bot shut down")
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    try:
-        loop.run_until_complete(main(loop))
-    except KeyboardInterrupt:
-        logger.error("Bot stopped by user (KeyboardInterrupt)")
-    except Exception as e:
-        logger.error(f"Error running main: {e}")
-    finally:
-        for task in asyncio.all_tasks(loop):
-            if task is not asyncio.current_task(loop):
-                task.cancel()
-                try:
-                    loop.run_until_complete(task)
-                except asyncio.CancelledError:
-                    pass
-        try:
-            loop.run_until_complete(loop.shutdown_asyncgens())
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Error shutting down asyncgens: {e}")
-        loop.close()
-        logger.error("Event loop closed")
+    asyncio.run(main())
